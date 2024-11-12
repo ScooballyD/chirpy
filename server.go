@@ -3,11 +3,17 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"os"
 	"sync/atomic"
+
+	"github.com/ScooballyD/chirpy/internal/database"
 )
 
 type apiConfig struct {
 	fileserverHits atomic.Int32
+	db             *database.Queries
+	Platform       string
+	Secret         string
 }
 
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
@@ -26,18 +32,33 @@ func (cfg *apiConfig) metricsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (cfg *apiConfig) resetHandler(w http.ResponseWriter, r *http.Request) {
+	if cfg.Platform != "dev" {
+		w.WriteHeader(403)
+		return
+	}
+
 	cfg.fileserverHits.Store(0)
+	cfg.db.ResetUsers(r.Context())
 }
 
-func StartServer() {
-	apiCfg := apiConfig{
+func StartServer(dbQ *database.Queries) {
+	cfg := apiConfig{
 		fileserverHits: atomic.Int32{},
+		db:             dbQ,
+		Platform:       os.Getenv("PLATFORM"),
+		Secret:         os.Getenv("SECRET"),
 	}
 	mux := http.NewServeMux()
-	mux.Handle("/app/", http.StripPrefix("/app", apiCfg.middlewareMetricsInc(http.FileServer(http.Dir(".")))))
-	mux.HandleFunc("GET /admin/metrics", apiCfg.metricsHandler)
-	mux.HandleFunc("POST /admin/reset", apiCfg.resetHandler)
-	mux.HandleFunc("POST /api/validate_chirp", apiCfg.validateChirpHandler)
+	mux.Handle("/app/", http.StripPrefix("/app", cfg.middlewareMetricsInc(http.FileServer(http.Dir(".")))))
+	mux.HandleFunc("GET /admin/metrics", cfg.metricsHandler)
+	mux.HandleFunc("POST /admin/reset", cfg.resetHandler)
+	mux.HandleFunc("POST /api/chirps", cfg.validateChirpHandler)
+	mux.HandleFunc("GET /api/chirps", cfg.getChirps)
+	mux.HandleFunc("GET /api/chirps/{chirpID}", cfg.getChirps)
+	mux.HandleFunc("POST /api/login", cfg.loginUser)
+	mux.HandleFunc("POST /api/refresh", cfg.validateRefreshToken)
+	mux.HandleFunc("POST /api/revoke", cfg.revokeRefreshToken)
+	mux.HandleFunc("POST /api/users", cfg.createUser)
 
 	srv := http.Server{
 		Handler: mux,
