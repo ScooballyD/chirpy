@@ -14,6 +14,7 @@ type apiConfig struct {
 	db             *database.Queries
 	Platform       string
 	Secret         string
+	PolkaKey       string
 }
 
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
@@ -47,18 +48,22 @@ func StartServer(dbQ *database.Queries) {
 		db:             dbQ,
 		Platform:       os.Getenv("PLATFORM"),
 		Secret:         os.Getenv("SECRET"),
+		PolkaKey:       os.Getenv("POLKA_KEY"),
 	}
 	mux := http.NewServeMux()
 	mux.Handle("/app/", http.StripPrefix("/app", cfg.middlewareMetricsInc(http.FileServer(http.Dir(".")))))
 	mux.HandleFunc("GET /admin/metrics", cfg.metricsHandler)
 	mux.HandleFunc("POST /admin/reset", cfg.resetHandler)
-	mux.HandleFunc("POST /api/chirps", cfg.validateChirpHandler)
+	mux.HandleFunc("DELETE /api/chirps/{chirpID}", cfg.deleteChirp)
 	mux.HandleFunc("GET /api/chirps", cfg.getChirps)
 	mux.HandleFunc("GET /api/chirps/{chirpID}", cfg.getChirps)
+	mux.HandleFunc("POST /api/chirps", cfg.validateChirpHandler)
 	mux.HandleFunc("POST /api/login", cfg.loginUser)
+	mux.HandleFunc("POST /api/polka/webhooks", cfg.upgradeUser)
 	mux.HandleFunc("POST /api/refresh", cfg.validateRefreshToken)
 	mux.HandleFunc("POST /api/revoke", cfg.revokeRefreshToken)
 	mux.HandleFunc("POST /api/users", cfg.createUser)
+	mux.HandleFunc("PUT /api/users", cfg.updateUser)
 
 	srv := http.Server{
 		Handler: mux,

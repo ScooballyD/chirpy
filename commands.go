@@ -18,6 +18,7 @@ type User struct {
 	Email     string    `json:"email"`
 	Token     string    `json:"token"`
 	RefToken  string    `json:"refresh_token"`
+	IsRed     bool      `json:"is_chirpy_red"`
 }
 
 func (cfg *apiConfig) createUser(w http.ResponseWriter, r *http.Request) {
@@ -53,8 +54,51 @@ func (cfg *apiConfig) createUser(w http.ResponseWriter, r *http.Request) {
 		CreatedAt: user.CreatedAt,
 		UpdatedAt: user.UpdatedAt,
 		Email:     user.Email,
+		IsRed:     user.IsChirpyRed,
 	}
 	respondWithJSON(w, resp, 201)
+}
+
+func (cfg *apiConfig) deleteChirp(w http.ResponseWriter, r *http.Request) {
+	tkn, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		respondWithError(w, fmt.Sprintf("unauthorized: %v", err), 401)
+		return
+	}
+	uid, err := auth.ValidateJWT(tkn, cfg.Secret)
+	if err != nil {
+		fmt.Println(err)
+		respondWithError(w, fmt.Sprintf("unauthorized: %v", err), 401)
+		return
+	}
+
+	idStr := r.PathValue("chirpID")
+	if idStr == "" {
+		respondWithError(w, "to delete chirp matching id is required", 400)
+		return
+	}
+	cid, err := uuid.Parse(idStr)
+	if err != nil {
+		fmt.Printf("unable to parse id: %v", err)
+		return
+	}
+
+	chirp, err := cfg.db.GetChirp(r.Context(), cid)
+	if err != nil {
+		respondWithError(w, fmt.Sprintf("unable to find chirp: %v", err), 404)
+		return
+	}
+	if uid != chirp.UserID {
+		respondWithError(w, fmt.Sprintf("you are not the registered author of chirp %v", cid), 403)
+		return
+	}
+
+	err = cfg.db.DeleteChirp(r.Context(), chirp.ID)
+	if err != nil {
+		fmt.Printf("unable to delete chirp: %v", err)
+		return
+	}
+	respondWithJSON(w, nil, 204)
 }
 
 func (cfg *apiConfig) getChirps(w http.ResponseWriter, r *http.Request) {
@@ -63,6 +107,14 @@ func (cfg *apiConfig) getChirps(w http.ResponseWriter, r *http.Request) {
 		fmt.Printf("unable to retrieve chirps: %v", err)
 		return
 	}
+	if r.URL.Query().Get("sort") == "desc" {
+		chirps, err = cfg.db.GetChirpsDesc(r.Context())
+		if err != nil {
+			fmt.Printf("unable to retrieve chirps: %v", err)
+			return
+		}
+	}
+
 	idStr := r.PathValue("chirpID")
 	if idStr != "" {
 		id, err := uuid.Parse(idStr)
@@ -91,6 +143,30 @@ func (cfg *apiConfig) getChirps(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var resp []Chirp
+
+	Aid := r.URL.Query().Get("author_id")
+	if Aid != "" {
+		id, err := uuid.Parse(Aid)
+		if err != nil {
+			fmt.Printf("unable to parse id: %v", err)
+			return
+		}
+
+		for _, chirp := range chirps {
+			chrp := Chirp{
+				Id:        chirp.ID,
+				CreatedAt: chirp.CreatedAt,
+				UpdatedAt: chirp.UpdatedAt,
+				Body:      chirp.Body,
+				UserId:    chirp.UserID,
+			}
+			if chrp.UserId == id {
+				resp = append(resp, chrp)
+			}
+		}
+		respondWithJSON(w, resp, 200)
+		return
+	}
 
 	for _, chirp := range chirps {
 		chrp := Chirp{
@@ -160,7 +236,62 @@ func (cfg *apiConfig) loginUser(w http.ResponseWriter, r *http.Request) {
 		Email:     user.Email,
 		Token:     tkn,
 		RefToken:  Rtkn,
+		IsRed:     user.IsChirpyRed,
 	}
 
 	respondWithJSON(w, Rusr, 200)
+}
+
+func (cfg *apiConfig) updateUser(w http.ResponseWriter, r *http.Request) {
+	tkn, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		respondWithError(w, fmt.Sprintf("unauthorized: %v", err), 401)
+		return
+	}
+	id, err := auth.ValidateJWT(tkn, cfg.Secret)
+	if err != nil {
+		fmt.Println(err)
+		respondWithError(w, fmt.Sprintf("unauthorized: %v", err), 401)
+		return
+	}
+
+	type Usr struct {
+		Password string `json:"password"`
+		Email    string `json:"email"`
+	}
+	usr := Usr{}
+
+	decoder := json.NewDecoder(r.Body)
+	err = decoder.Decode(&usr)
+	if err != nil {
+		fmt.Printf("unable to decoder request: %v", err)
+		return
+	}
+
+	hPass, err := auth.HashPassword(usr.Password)
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	usrData, err := cfg.db.UpdateUserCredentials(
+		r.Context(),
+		database.UpdateUserCredentialsParams{
+			ID:             id,
+			Email:          usr.Email,
+			HashedPassword: hPass,
+		})
+	if err != nil {
+		respondWithError(w, fmt.Sprintf("unable to update credentials: %v", err), 401)
+		return
+	}
+
+	pl := User{
+		Id:        usrData.ID,
+		UpdatedAt: usrData.UpdatedAt,
+		CreatedAt: usrData.CreatedAt,
+		Email:     usrData.Email,
+		IsRed:     usrData.IsChirpyRed,
+	}
+
+	respondWithJSON(w, pl, 200)
 }

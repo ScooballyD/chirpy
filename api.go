@@ -55,6 +55,45 @@ func respondWithJSON(w http.ResponseWriter, pl interface{}, code int) {
 	w.Write(dat)
 }
 
+func (cfg *apiConfig) upgradeUser(w http.ResponseWriter, r *http.Request) {
+	ApiKey, err := auth.GetAPIKey(r.Header)
+	if err != nil {
+		respondWithError(w, fmt.Sprintf("unable to read ApiKey: %v", err), 401)
+		return
+	}
+
+	if cfg.PolkaKey != ApiKey {
+		respondWithError(w, "unrecogonized ApiKey", 401)
+		return
+	}
+
+	type req struct {
+		Event string `json:"event"`
+		Data  struct {
+			UserId uuid.UUID `json:"user_id"`
+		} `json:"data"`
+	}
+	Rdata := req{}
+
+	decoder := json.NewDecoder(r.Body)
+	err = decoder.Decode(&Rdata)
+	if err != nil {
+		fmt.Printf("unable to decoder request: %v", err)
+		return
+	}
+
+	if Rdata.Event != "user.upgraded" {
+		respondWithError(w, "unregistered hook", 204)
+		return
+	}
+	err = cfg.db.UpgradeUser(r.Context(), Rdata.Data.UserId)
+	if err != nil {
+		respondWithError(w, fmt.Sprintf("unable to upgrade user: %v", err), 404)
+		return
+	}
+	respondWithJSON(w, nil, 204)
+}
+
 func (cfg *apiConfig) revokeRefreshToken(w http.ResponseWriter, r *http.Request) {
 	Rtkn, err := auth.GetRefreshToken(r.Header)
 	if err != nil {

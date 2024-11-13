@@ -12,6 +12,16 @@ import (
 	"github.com/google/uuid"
 )
 
+func GetAPIKey(headers http.Header) (string, error) {
+	Key := headers.Get("Authorization")
+	Skey := strings.Split(Key, " ")
+	if len(Skey) != 2 {
+		return "", fmt.Errorf("ApiKey improper format")
+	}
+
+	return strings.TrimSpace(Skey[1]), nil
+}
+
 func MakeJWT(userID uuid.UUID, tokenSecret string) (string, error) {
 	claims := &jwt.RegisteredClaims{
 		Issuer:    "chirpy",
